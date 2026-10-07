@@ -110,8 +110,9 @@ function decodeGameName(value: string) {
 				apos: "'",
 				nbsp: ' ',
 			};
-			if (!code.startsWith('#'))
+			if (!code.startsWith('#')) {
 				return namedEntities[code.toLowerCase()] ?? entity;
+			}
 			const numericCode =
 				code[1]?.toLowerCase() === 'x' ?
 					Number.parseInt(code.slice(2), 16)

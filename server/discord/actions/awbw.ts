@@ -106,10 +106,12 @@ export async function onCommand(
 		|| !interaction.appPermissions?.has([
 			PermissionFlagsBits.ViewChannel,
 			PermissionFlagsBits.SendMessages,
+			PermissionFlagsBits.ReadMessageHistory,
 		])
 	) {
 		await interaction.reply({
-			content: 'Use this command in a channel where the bot can post.',
+			content:
+				'Use this command in a channel where the bot can read and post messages.',
 			flags: MessageFlags.Ephemeral,
 		});
 		return;

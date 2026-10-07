@@ -1,13 +1,13 @@
 import {
-	ChannelType,
-	PermissionFlagsBits,
 	type CategoryChannel,
+	ChannelType,
 	type Guild,
+	PermissionFlagsBits,
 	type TextChannel,
 } from 'discord.js';
-import {
-	type GuildChannelGroupSummary,
-	type ManagedGuildSummary,
+import type {
+	GuildChannelGroupSummary,
+	ManagedGuildSummary,
 } from '#shared/types/dashboard';
 import { type H3Event, createError, getRouterParam, readBody } from 'h3';
 import { requireManagedGuild, useDiscordAuthSession } from './discordAuth.js';
@@ -166,11 +166,13 @@ export async function assertSubscriptionChannelIsUsable(
 			.has([
 				PermissionFlagsBits.ViewChannel,
 				PermissionFlagsBits.SendMessages,
+				PermissionFlagsBits.ReadMessageHistory,
 			])
 	) {
 		throw createError({
 			statusCode: 403,
-			statusMessage: 'The bot cannot send messages in that channel.',
+			statusMessage:
+				'The bot needs permission to view, read, and send messages in that channel.',
 		});
 	}
 	return channel;
@@ -228,6 +230,7 @@ function createChannelGroups(guild: Guild): GuildChannelGroupSummary[] {
 				.has([
 					PermissionFlagsBits.ViewChannel,
 					PermissionFlagsBits.SendMessages,
+					PermissionFlagsBits.ReadMessageHistory,
 				]);
 		},
 	);

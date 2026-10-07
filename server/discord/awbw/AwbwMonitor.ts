@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import type { Client } from 'discord.js';
 import {
+	type AwbwGameState,
 	fetchGameState,
 	findPlayerIds,
 	parseGameUrl,
 	parseNextTurnMessage,
-	type AwbwGameState,
 } from './gamePage.js';
 import db from '../util/Store.js';
+import { removeOlderGameNotifications } from './notificationHistory.js';
 
 export interface AwbwSubscription {
 	id: string;
@@ -25,6 +26,12 @@ export interface AwbwSubscription {
 
 interface StoredAwbwData {
 	subscriptions: AwbwSubscription[];
+	notificationHistory?: Record<string, GameNotificationHistory>;
+}
+
+interface GameNotificationHistory {
+	messageIds: string[];
+	olderMessagesChecked: boolean;
 }
 
 interface GameConnection {
@@ -44,7 +51,7 @@ const REFRESH_INTERVAL = 60_000;
 export default class AwbwMonitor {
 	private readonly connections = new Map<string, GameConnection>();
 	private readonly gameNameFetches = new Map<string, Promise<void>>();
-	private readonly pendingNotifications = new Set<string>();
+	private readonly pendingNotifications = new Map<string, Promise<void>>();
 	private disposed = false;
 
 	constructor(private readonly client: Client) {}
@@ -147,7 +154,9 @@ export default class AwbwMonitor {
 			return false;
 		}
 		const removed = storedData.subscriptions.splice(index, 1)[0];
-		if (!removed) return false;
+		if (!removed) {
+			return false;
+		}
 		const { gameId } = removed;
 		if (
 			!storedData.subscriptions.some(
@@ -209,7 +218,9 @@ export default class AwbwMonitor {
 				typeof event.data === 'string' ?
 					parseNextTurnMessage(event.data)
 				:	null;
-			if (!nextTurn) return;
+			if (!nextTurn) {
+				return;
+			}
 			connection.latestTurnStartedAt = nextTurn.turnStartedAt;
 			void this.notifyPlayers(gameId, nextTurn);
 		});
@@ -276,7 +287,9 @@ export default class AwbwMonitor {
 
 	private fetchGameName(gameId: string) {
 		const pending = this.gameNameFetches.get(gameId);
-		if (pending) return pending;
+		if (pending) {
+			return pending;
+		}
 		const fetchPromise = fetchGameState(gameId)
 			.then(async (gameState) => {
 				if (this.updateGameName(gameId, gameState.gameName)) {
@@ -295,7 +308,9 @@ export default class AwbwMonitor {
 	}
 
 	private updateGameName(gameId: string, gameName: string | null) {
-		if (!gameName) return false;
+		if (!gameName) {
+			return false;
+		}
 		let changed = false;
 		for (const subscription of this.getStoredData().subscriptions) {
 			if (
@@ -313,44 +328,144 @@ export default class AwbwMonitor {
 		gameId: string,
 		gameState: Pick<AwbwGameState, 'currentPlayerId' | 'turnKey'>,
 	) {
-		for (const subscription of this.getStoredData().subscriptions) {
-			const notificationKey = `${subscription.id}:${gameState.turnKey}`;
+		const channelIds = new Set(
+			this.getStoredData()
+				.subscriptions.filter(
+					(subscription) => subscription.gameId === gameId,
+				)
+				.map((subscription) => subscription.channelId),
+		);
+		await Promise.all(
+			[...channelIds].map((channelId) =>
+				this.queueChannelNotification(gameId, channelId, gameState),
+			),
+		);
+	}
+
+	private async queueChannelNotification(
+		gameId: string,
+		channelId: string,
+		gameState: Pick<AwbwGameState, 'currentPlayerId' | 'turnKey'>,
+	) {
+		const notificationKey = `${gameId}:${channelId}`;
+		const previousNotification =
+			this.pendingNotifications.get(notificationKey);
+		const notification = (async () => {
+			await previousNotification;
+			await this.sendChannelNotification(gameId, channelId, gameState);
+		})();
+		this.pendingNotifications.set(notificationKey, notification);
+		try {
+			await notification;
+		} finally {
 			if (
-				subscription.gameId !== gameId
-				|| !(
-					subscription.playerIds ?? [subscription.playerId]
-				).includes(gameState.currentPlayerId ?? '')
-				|| subscription.lastNotifiedTurn === gameState.turnKey
-				|| this.pendingNotifications.has(notificationKey)
+				this.pendingNotifications.get(notificationKey) === notification
 			) {
-				continue;
-			}
-			this.pendingNotifications.add(notificationKey);
-			try {
-				const channel = await this.client.channels.fetch(
-					subscription.channelId,
-				);
-				if (!channel?.isSendable()) {
-					throw new Error('Channel is not available for messages.');
-				}
-				const gameLabel =
-					subscription.gameName ?
-						`AWBW game ${subscription.gameName}`
-					:	`AWBW game ${gameId}`;
-				await channel.send({
-					content: `<@${subscription.discordUserId}> it is your turn in [${escapeLinkLabel(gameLabel)}](${subscription.gameUrl}).`,
-					allowedMentions: { users: [subscription.discordUserId] },
-				});
-				subscription.lastNotifiedTurn = gameState.turnKey ?? undefined;
-				await db.write();
-			} catch (error) {
-				console.error('Failed to send AWBW turn notification', {
-					subscriptionId: subscription.id,
-					error,
-				});
-			} finally {
 				this.pendingNotifications.delete(notificationKey);
 			}
+		}
+	}
+
+	private async sendChannelNotification(
+		gameId: string,
+		channelId: string,
+		gameState: Pick<AwbwGameState, 'currentPlayerId' | 'turnKey'>,
+	) {
+		const subscriptions = this.getStoredData().subscriptions.filter(
+			(subscription) =>
+				subscription.gameId === gameId
+				&& subscription.channelId === channelId
+				&& (subscription.playerIds ?? [subscription.playerId]).includes(
+					gameState.currentPlayerId ?? '',
+				)
+				&& subscription.lastNotifiedTurn !== gameState.turnKey,
+		);
+		if (subscriptions.length === 0) {
+			return;
+		}
+
+		try {
+			const channel = await this.client.channels.fetch(channelId);
+			if (!channel?.isSendable() || !channel.isTextBased()) {
+				throw new Error('Channel is not available for messages.');
+			}
+			const userIds = [
+				...new Set(
+					subscriptions.map(
+						(subscription) => subscription.discordUserId,
+					),
+				),
+			];
+			const gameName = subscriptions.find(
+				(subscription) => subscription.gameName,
+			)?.gameName;
+			const gameLabel = `AWBW game ${gameName ?? gameId}`;
+			const gameUrl = subscriptions[0]!.gameUrl;
+			const message = await channel.send({
+				content: `${userIds.map((userId) => `<@${userId}>`).join(' ')} it is your turn in [${escapeLinkLabel(gameLabel)}](${gameUrl}).`,
+				allowedMentions: { users: userIds },
+			});
+			for (const subscription of subscriptions) {
+				subscription.lastNotifiedTurn = gameState.turnKey ?? undefined;
+			}
+			const storedData = this.getStoredData();
+			storedData.notificationHistory ??= {};
+			const historyKey = `${gameId}:${channelId}`;
+			const history = (storedData.notificationHistory[historyKey] ??= {
+				messageIds: [],
+				olderMessagesChecked: false,
+			});
+			history.messageIds.push(message.id);
+			await db.write();
+
+			for (const previousMessageId of history.messageIds.filter(
+				(messageId) => messageId !== message.id,
+			)) {
+				try {
+					await channel.messages.delete(previousMessageId);
+				} catch (error) {
+					if (!isUnknownMessageError(error)) {
+						console.warn(
+							'Could not remove an older AWBW notification',
+							{
+								gameId,
+								channelId,
+								messageId: previousMessageId,
+								error,
+							},
+						);
+						continue;
+					}
+				}
+				history.messageIds = history.messageIds.filter(
+					(messageId) => messageId !== previousMessageId,
+				);
+			}
+			if (!history.olderMessagesChecked) {
+				try {
+					await removeOlderGameNotifications(
+						channel.messages,
+						this.client.user!.id,
+						gameId,
+						message.id,
+					);
+					history.olderMessagesChecked = true;
+					history.messageIds = [message.id];
+				} catch (error) {
+					console.warn('Could not check older AWBW notifications', {
+						gameId,
+						channelId,
+						error,
+					});
+				}
+			}
+			await db.write();
+		} catch (error) {
+			console.error('Failed to send AWBW turn notification', {
+				gameId,
+				channelId,
+				error,
+			});
 		}
 	}
 
@@ -360,13 +475,28 @@ export default class AwbwMonitor {
 			return;
 		}
 		this.connections.delete(gameId);
-		if (connection.reconnectTimer) clearTimeout(connection.reconnectTimer);
-		if (connection.heartbeatTimer) clearInterval(connection.heartbeatTimer);
-		if (connection.refreshTimer) clearInterval(connection.refreshTimer);
+		if (connection.reconnectTimer) {
+			clearTimeout(connection.reconnectTimer);
+		}
+		if (connection.heartbeatTimer) {
+			clearInterval(connection.heartbeatTimer);
+		}
+		if (connection.refreshTimer) {
+			clearInterval(connection.refreshTimer);
+		}
 		connection.socket?.close();
 	}
 }
 
 function escapeLinkLabel(value: string) {
 	return value.replace(/[\\\[\]]/g, '\\$&');
+}
+
+function isUnknownMessageError(error: unknown): boolean {
+	return (
+		typeof error === 'object'
+		&& error !== null
+		&& 'code' in error
+		&& error.code === 10008
+	);
 }
