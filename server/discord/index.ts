@@ -1,4 +1,4 @@
-import { Client, Partials, REST, Routes } from 'discord.js';
+import { ActivityType, Client, Partials, REST, Routes } from 'discord.js';
 import { GatewayIntentBits, MessageFlags } from 'discord-api-types/v10';
 import { basename, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -143,6 +143,10 @@ export function startDiscordBot() {
 		const client = new Client({
 			intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 			partials: [Partials.User],
+			presence: {
+				activities: [{ name: 'you 💕', type: ActivityType.Watching }],
+				status: 'online',
+			},
 		});
 		state.client = client;
 
