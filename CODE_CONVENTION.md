@@ -1,0 +1,8 @@
+- **Prioritize readability and maintainability.** Write code that is easy to understand and easy to modify by someone unfamiliar with the project.
+- **Use descriptive names.** Variable names, function names, arguments, and other identifiers should clearly describe their purpose. Avoid single-letter names and non-standard abbreviations. Use widely recognized abbreviations (e.g. `URL`, `HTML`, `HTTP`) when appropriate.
+- **Keep files focused.** Pages, layouts, components, and composables should each have a clear responsibility. Avoid creating overly large files, but don't split code into additional files unless it improves organization, readability, or reuse.
+- **Componentize thoughtfully.** Extract components when they represent a reusable piece of UI or a well-defined, self-contained section of a page. Don't create wrapper components that are only used once and simply mirror an entire page. Pages should still contain meaningful structure rather than just rendering a single child component.
+- **Keep components reasonably sized.** There is no strict line limit, but if a page or component is becoming difficult to navigate or understand (roughly a few hundred lines), consider breaking it into logical, focused components.
+- **Favor self-documenting code over comments.** Write code that is understandable through good naming and structure. Add comments only when they explain intent, non-obvious behavior, or important context that cannot be expressed clearly in the code itself.
+- **Use modern JavaScript and TypeScript conventions.** Prefer current language features and idiomatic patterns over older approaches when they improve readability and maintainability.
+- **Prefer template literals** over string concatenation when appropriate.
