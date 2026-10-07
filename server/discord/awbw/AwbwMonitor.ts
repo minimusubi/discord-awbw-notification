@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-import type { Client } from 'discord.js';
 import {
 	type AwbwGameState,
 	fetchGameState,
@@ -7,7 +5,10 @@ import {
 	parseGameUrl,
 	parseNextTurnMessage,
 } from './gamePage.js';
+import type { Client } from 'discord.js';
 import db from '../util/Store.js';
+import { getTurnIdentity } from './turnIdentity.js';
+import { randomUUID } from 'node:crypto';
 import { removeOlderGameNotifications } from './notificationHistory.js';
 
 export interface AwbwSubscription {
@@ -37,6 +38,7 @@ interface GameNotificationHistory {
 interface GameConnection {
 	socket?: WebSocket;
 	reconnectTimer?: ReturnType<typeof setTimeout>;
+	stableConnectionTimer?: ReturnType<typeof setTimeout>;
 	heartbeatTimer?: ReturnType<typeof setInterval>;
 	refreshTimer?: ReturnType<typeof setInterval>;
 	reconnectDelay: number;
@@ -45,6 +47,7 @@ interface GameConnection {
 }
 
 const MAX_RECONNECT_DELAY = 60_000;
+const STABLE_CONNECTION_INTERVAL = 60_000;
 const HEARTBEAT_INTERVAL = 45_000;
 const REFRESH_INTERVAL = 60_000;
 
@@ -135,7 +138,7 @@ export default class AwbwMonitor {
 			gameUrl,
 			playerId,
 			playerIds,
-			lastNotifiedTurn: gameState.turnKey ?? undefined,
+			lastNotifiedTurn: getTurnIdentity(gameState.turnKey) ?? undefined,
 		};
 		storedData.subscriptions.push(subscription);
 		await db.write();
@@ -192,6 +195,7 @@ export default class AwbwMonitor {
 			() => void this.refreshGame(gameId, connection),
 			REFRESH_INTERVAL,
 		);
+		void this.refreshGame(gameId, connection);
 		this.openSocket(gameId, connection);
 	}
 
@@ -199,12 +203,27 @@ export default class AwbwMonitor {
 		if (this.disposed || this.connections.get(gameId) !== connection) {
 			return;
 		}
-		const socket = new WebSocket(
-			`wss://awbw.amarriner.com/node/game/${gameId}`,
-		);
+		let socket: WebSocket;
+		try {
+			socket = new WebSocket(
+				`wss://awbw.amarriner.com/node/game/${gameId}`,
+			);
+		} catch (error) {
+			console.warn('Could not open AWBW websocket', { gameId, error });
+			this.scheduleReconnect(gameId, connection);
+			return;
+		}
 		connection.socket = socket;
 		socket.addEventListener('open', () => {
-			connection.reconnectDelay = 1_000;
+			connection.stableConnectionTimer = setTimeout(() => {
+				if (
+					connection.socket === socket
+					&& socket.readyState === WebSocket.OPEN
+				) {
+					connection.reconnectDelay = 1_000;
+				}
+				connection.stableConnectionTimer = undefined;
+			}, STABLE_CONNECTION_INTERVAL);
 			socket.send('');
 			connection.heartbeatTimer = setInterval(() => {
 				if (socket.readyState === WebSocket.OPEN) {
@@ -229,6 +248,10 @@ export default class AwbwMonitor {
 			socket.close();
 		});
 		socket.addEventListener('close', () => {
+			if (connection.stableConnectionTimer) {
+				clearTimeout(connection.stableConnectionTimer);
+				connection.stableConnectionTimer = undefined;
+			}
 			if (connection.heartbeatTimer) {
 				clearInterval(connection.heartbeatTimer);
 				connection.heartbeatTimer = undefined;
@@ -237,16 +260,29 @@ export default class AwbwMonitor {
 				return;
 			}
 			connection.socket = undefined;
-			const delay = connection.reconnectDelay;
-			connection.reconnectDelay = Math.min(
-				delay * 2,
-				MAX_RECONNECT_DELAY,
-			);
-			connection.reconnectTimer = setTimeout(() => {
-				connection.reconnectTimer = undefined;
-				this.openSocket(gameId, connection);
-			}, delay);
+			void this.refreshGame(gameId, connection);
+			this.scheduleReconnect(gameId, connection);
 		});
+	}
+
+	private scheduleReconnect(gameId: string, connection: GameConnection) {
+		if (
+			this.disposed
+			|| this.connections.get(gameId) !== connection
+			|| connection.reconnectTimer
+		) {
+			return;
+		}
+		const delay = connection.reconnectDelay;
+		connection.reconnectDelay = Math.min(delay * 2, MAX_RECONNECT_DELAY);
+		console.warn('AWBW websocket disconnected; reconnecting', {
+			gameId,
+			delayMilliseconds: delay,
+		});
+		connection.reconnectTimer = setTimeout(() => {
+			connection.reconnectTimer = undefined;
+			this.openSocket(gameId, connection);
+		}, delay);
 	}
 
 	private async refreshGame(gameId: string, connection: GameConnection) {
@@ -371,6 +407,10 @@ export default class AwbwMonitor {
 		channelId: string,
 		gameState: Pick<AwbwGameState, 'currentPlayerId' | 'turnKey'>,
 	) {
+		const currentTurnIdentity = getTurnIdentity(gameState.turnKey);
+		if (!currentTurnIdentity) {
+			return;
+		}
 		const subscriptions = this.getStoredData().subscriptions.filter(
 			(subscription) =>
 				subscription.gameId === gameId
@@ -378,7 +418,8 @@ export default class AwbwMonitor {
 				&& (subscription.playerIds ?? [subscription.playerId]).includes(
 					gameState.currentPlayerId ?? '',
 				)
-				&& subscription.lastNotifiedTurn !== gameState.turnKey,
+				&& getTurnIdentity(subscription.lastNotifiedTurn)
+					!== currentTurnIdentity,
 		);
 		if (subscriptions.length === 0) {
 			return;
@@ -406,7 +447,7 @@ export default class AwbwMonitor {
 				allowedMentions: { users: userIds },
 			});
 			for (const subscription of subscriptions) {
-				subscription.lastNotifiedTurn = gameState.turnKey ?? undefined;
+				subscription.lastNotifiedTurn = currentTurnIdentity;
 			}
 			const storedData = this.getStoredData();
 			storedData.notificationHistory ??= {};
@@ -477,6 +518,9 @@ export default class AwbwMonitor {
 		this.connections.delete(gameId);
 		if (connection.reconnectTimer) {
 			clearTimeout(connection.reconnectTimer);
+		}
+		if (connection.stableConnectionTimer) {
+			clearTimeout(connection.stableConnectionTimer);
 		}
 		if (connection.heartbeatTimer) {
 			clearInterval(connection.heartbeatTimer);
