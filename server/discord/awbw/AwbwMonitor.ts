@@ -440,7 +440,7 @@ export default class AwbwMonitor {
 			const gameName = subscriptions.find(
 				(subscription) => subscription.gameName,
 			)?.gameName;
-			const gameLabel = `AWBW game ${gameName ?? gameId}`;
+			const gameLabel = `AWBW game **${gameName ?? gameId}**`;
 			const gameUrl = subscriptions[0]!.gameUrl;
 			const message = await channel.send({
 				content: `${userIds.map((userId) => `<@${userId}>`).join(' ')} it is your turn in [${escapeLinkLabel(gameLabel)}](${gameUrl}).`,
