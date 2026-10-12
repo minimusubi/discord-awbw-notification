@@ -2,6 +2,7 @@ import {
 	type AwbwGameState,
 	fetchGameState,
 	findPlayerIds,
+	isGameOverMessage,
 	parseGameUrl,
 	parseNextTurnMessage,
 } from './gamePage.js';
@@ -55,6 +56,8 @@ export default class AwbwMonitor {
 	private readonly connections = new Map<string, GameConnection>();
 	private readonly gameNameFetches = new Map<string, Promise<void>>();
 	private readonly pendingNotifications = new Map<string, Promise<void>>();
+	private readonly finishingGames = new Map<string, Promise<void>>();
+	private readonly completedGames = new Set<string>();
 	private disposed = false;
 
 	constructor(private readonly client: Client) {}
@@ -105,6 +108,9 @@ export default class AwbwMonitor {
 		}
 		const { gameId, gameUrl } = parseGameUrl(input.gameUrl);
 		const gameState = await fetchGameState(gameId);
+		if (gameState.isCompleted || this.completedGames.has(gameId)) {
+			throw new Error(`AWBW game ${gameId} has already ended.`);
+		}
 		const playerIds = findPlayerIds(gameState, awbwUsername);
 		if (playerIds.length === 0) {
 			throw new Error(
@@ -186,7 +192,11 @@ export default class AwbwMonitor {
 	}
 
 	private ensureConnection(gameId: string) {
-		if (this.disposed || this.connections.has(gameId)) {
+		if (
+			this.disposed
+			|| this.completedGames.has(gameId)
+			|| this.connections.has(gameId)
+		) {
 			return;
 		}
 		const connection: GameConnection = { reconnectDelay: 1_000 };
@@ -233,10 +243,14 @@ export default class AwbwMonitor {
 			void this.refreshGame(gameId, connection);
 		});
 		socket.addEventListener('message', (event) => {
-			const nextTurn =
-				typeof event.data === 'string' ?
-					parseNextTurnMessage(event.data)
-				:	null;
+			if (typeof event.data !== 'string') {
+				return;
+			}
+			if (isGameOverMessage(event.data)) {
+				void this.finishGame(gameId);
+				return;
+			}
+			const nextTurn = parseNextTurnMessage(event.data);
 			if (!nextTurn) {
 				return;
 			}
@@ -301,7 +315,14 @@ export default class AwbwMonitor {
 
 	private async applyGameState(gameId: string, connection: GameConnection) {
 		const gameState = await fetchGameState(gameId);
-		if (this.disposed || !this.connections.has(gameId)) {
+		if (this.disposed || this.connections.get(gameId) !== connection) {
+			return;
+		}
+		if (gameState.isCompleted) {
+			await this.finishGame(gameId);
+			return;
+		}
+		if (this.completedGames.has(gameId)) {
 			return;
 		}
 		if (this.updateGameName(gameId, gameState.gameName)) {
@@ -364,6 +385,9 @@ export default class AwbwMonitor {
 		gameId: string,
 		gameState: Pick<AwbwGameState, 'currentPlayerId' | 'turnKey'>,
 	) {
+		if (this.completedGames.has(gameId)) {
+			return;
+		}
 		const channelIds = new Set(
 			this.getStoredData()
 				.subscriptions.filter(
@@ -407,6 +431,9 @@ export default class AwbwMonitor {
 		channelId: string,
 		gameState: Pick<AwbwGameState, 'currentPlayerId' | 'turnKey'>,
 	) {
+		if (this.completedGames.has(gameId)) {
+			return;
+		}
 		const currentTurnIdentity = getTurnIdentity(gameState.turnKey);
 		if (!currentTurnIdentity) {
 			return;
@@ -429,6 +456,9 @@ export default class AwbwMonitor {
 			const channel = await this.client.channels.fetch(channelId);
 			if (!channel?.isSendable() || !channel.isTextBased()) {
 				throw new Error('Channel is not available for messages.');
+			}
+			if (this.completedGames.has(gameId)) {
+				return;
 			}
 			const userIds = [
 				...new Set(
@@ -508,6 +538,52 @@ export default class AwbwMonitor {
 				error,
 			});
 		}
+	}
+
+	private finishGame(gameId: string): Promise<void> {
+		const existing = this.finishingGames.get(gameId);
+		if (existing) {
+			return existing;
+		}
+		this.completedGames.add(gameId);
+		const finish = this.removeCompletedGame(gameId)
+			.catch((error: unknown) => {
+				this.completedGames.delete(gameId);
+				console.error('Failed to remove completed AWBW game', {
+					gameId,
+					error,
+				});
+			})
+			.finally(() => this.finishingGames.delete(gameId));
+		this.finishingGames.set(gameId, finish);
+		return finish;
+	}
+
+	private async removeCompletedGame(gameId: string): Promise<void> {
+		const pendingNotifications = [...this.pendingNotifications]
+			.filter(([key]) => key.startsWith(`${gameId}:`))
+			.map(([, notification]) => notification);
+		await Promise.allSettled(pendingNotifications);
+
+		const storedData = this.getStoredData();
+		const previousCount = storedData.subscriptions.length;
+		storedData.subscriptions = storedData.subscriptions.filter(
+			(subscription) => subscription.gameId !== gameId,
+		);
+		for (const historyKey of Object.keys(
+			storedData.notificationHistory ?? {},
+		)) {
+			if (historyKey.startsWith(`${gameId}:`)) {
+				delete storedData.notificationHistory?.[historyKey];
+			}
+		}
+		await db.write();
+		this.closeConnection(gameId);
+		console.info('Stopped monitoring completed AWBW game', {
+			gameId,
+			removedSubscriptions:
+				previousCount - storedData.subscriptions.length,
+		});
 	}
 
 	private closeConnection(gameId: string) {

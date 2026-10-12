@@ -24,6 +24,12 @@ export default defineEventHandler(async (event) => {
 					'That AWBW username is not part of the selected game.',
 			});
 		}
+		if (/^AWBW game \d+ has already ended\.$/.test(errorMessage)) {
+			throw createError({
+				statusCode: 400,
+				statusMessage: 'This AWBW game has already ended.',
+			});
+		}
 		if (
 			errorMessage
 			=== 'This user already receives notifications for that game in this channel.'

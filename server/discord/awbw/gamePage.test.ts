@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
 	findPlayerIds,
+	isGameOverMessage,
 	parseGamePage,
 	parseGameUrl,
 	parseNextTurnMessage,
@@ -80,4 +81,24 @@ test('reads the live NextTurn websocket envelope', () => {
 		},
 	);
 	assert.equal(parseNextTurnMessage('{"Build":{}}'), null);
+});
+
+test('detects a completed game even when the page retains a current player', () => {
+	const gamePage = (gameEndDate: string) => `<script>
+		let gameDay = 6;
+		let currentTurn = 4179027;
+		let gameEndDate = "${gameEndDate}";
+		let playersInfo = {"4179027":{"users_username":"solo","players_id":4179027}};
+	</script>`;
+	assert.equal(parseGamePage(gamePage('2026-10-07')).isCompleted, true);
+	assert.equal(parseGamePage(gamePage('')).isCompleted, false);
+});
+
+test('recognizes the AWBW GameOver websocket action', () => {
+	assert.equal(isGameOverMessage('{"GameOver":{"action":"GameOver"}}'), true);
+	assert.equal(
+		isGameOverMessage('{"NextTurn":{"action":"NextTurn"}}'),
+		false,
+	);
+	assert.equal(isGameOverMessage('not JSON'), false);
 });

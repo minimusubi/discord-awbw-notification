@@ -2,6 +2,7 @@ const AWBW_ORIGIN = 'https://awbw.amarriner.com';
 
 export interface AwbwGameState {
 	gameName: string | null;
+	isCompleted: boolean;
 	currentPlayerId: string | null;
 	players: Map<string, string>;
 	turnKey: string | null;
@@ -37,6 +38,9 @@ export function parseGamePage(html: string): AwbwGameState {
 	);
 	const gameName =
 		gameNameMatch ? decodeGameName(gameNameMatch[1] ?? '') : null;
+	const gameEndDateMatch = html.match(
+		/\b(?:let|var|const)\s+gameEndDate\s*=\s*["']([^"']*)["']\s*;/,
+	);
 	const playersMatch = html.match(
 		/\b(?:let|var|const)\s+playersInfo\s*=\s*(\{[\s\S]*?\})\s*;/,
 	);
@@ -88,6 +92,7 @@ export function parseGamePage(html: string): AwbwGameState {
 		:	null;
 	return {
 		gameName,
+		isCompleted: Boolean(gameEndDateMatch?.[1]),
 		currentPlayerId,
 		players,
 		turnKey:
@@ -162,6 +167,21 @@ export function parseNextTurnMessage(message: string) {
 		turnKey: `${day}:${currentPlayerId}:${nextTurnStart}`,
 		turnStartedAt: nextTurnStart,
 	};
+}
+
+export function isGameOverMessage(message: string): boolean {
+	try {
+		const payload: unknown = JSON.parse(message);
+		return (
+			typeof payload === 'object'
+			&& payload !== null
+			&& 'GameOver' in payload
+			&& typeof payload.GameOver === 'object'
+			&& payload.GameOver !== null
+		);
+	} catch {
+		return false;
+	}
 }
 
 export async function fetchGameState(gameId: string): Promise<AwbwGameState> {
