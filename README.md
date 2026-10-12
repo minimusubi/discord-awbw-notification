@@ -28,4 +28,4 @@ The bot saves each signup's last notified game day and player seat. Adding a sig
 
 Each turn alert mentions all subscribed users for that game in the channel. After posting it, the bot removes its older alerts for the same game in that channel. It leaves alerts for other games and messages from other users alone. On the first alert after this feature is enabled, it checks the channel history for older bot alerts; later alerts use saved message IDs.
 
-When AWBW sends a `GameOver` event, the bot removes every signup for that game and closes its socket. Page checks also remove completed games if the event arrived while the bot was offline. Completed games cannot be added again.
+When AWBW sends a `GameOver` event, the bot removes the game's last Discord pings and every signup for that game, then closes its socket. Page checks also clean up completed games if the event arrived while the bot was offline. Completed games cannot be added again.

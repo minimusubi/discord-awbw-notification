@@ -566,6 +566,24 @@ export default class AwbwMonitor {
 		await Promise.allSettled(pendingNotifications);
 
 		const storedData = this.getStoredData();
+		const channelIds = new Set(
+			storedData.subscriptions
+				.filter((subscription) => subscription.gameId === gameId)
+				.map((subscription) => subscription.channelId),
+		);
+		for (const historyKey of Object.keys(
+			storedData.notificationHistory ?? {},
+		)) {
+			if (historyKey.startsWith(`${gameId}:`)) {
+				channelIds.add(historyKey.slice(gameId.length + 1));
+			}
+		}
+		await Promise.all(
+			[...channelIds].map((channelId) =>
+				this.removeCompletedGameNotifications(gameId, channelId),
+			),
+		);
+
 		const previousCount = storedData.subscriptions.length;
 		storedData.subscriptions = storedData.subscriptions.filter(
 			(subscription) => subscription.gameId !== gameId,
@@ -584,6 +602,49 @@ export default class AwbwMonitor {
 			removedSubscriptions:
 				previousCount - storedData.subscriptions.length,
 		});
+	}
+
+	private async removeCompletedGameNotifications(
+		gameId: string,
+		channelId: string,
+	): Promise<void> {
+		const history =
+			this.getStoredData().notificationHistory?.[
+				`${gameId}:${channelId}`
+			];
+		try {
+			const channel = await this.client.channels.fetch(channelId);
+			if (!channel?.isSendable() || !channel.isTextBased()) {
+				throw new Error('Channel is not available for messages.');
+			}
+			for (const messageId of history?.messageIds ?? []) {
+				try {
+					await channel.messages.delete(messageId);
+				} catch (error) {
+					if (!isUnknownMessageError(error)) {
+						console.warn('Could not remove an AWBW notification', {
+							gameId,
+							channelId,
+							messageId,
+							error,
+						});
+					}
+				}
+			}
+			if (!history?.olderMessagesChecked) {
+				await removeOlderGameNotifications(
+					channel.messages,
+					this.client.user!.id,
+					gameId,
+				);
+			}
+		} catch (error) {
+			console.warn('Could not check completed AWBW notifications', {
+				gameId,
+				channelId,
+				error,
+			});
+		}
 	}
 
 	private closeConnection(gameId: string) {

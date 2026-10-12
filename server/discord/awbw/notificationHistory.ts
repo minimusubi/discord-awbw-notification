@@ -16,7 +16,7 @@ export async function removeOlderGameNotifications(
 	messages: NotificationMessageHistory,
 	botUserId: string,
 	gameId: string,
-	newMessageId: string,
+	keepMessageId?: string,
 ): Promise<void> {
 	let before: string | undefined;
 	const gameUrl = `https://awbw.amarriner.com/game.php?games_id=${gameId}`;
@@ -25,7 +25,7 @@ export async function removeOlderGameNotifications(
 		const page = await messages.fetch({ limit: 100, before });
 		for (const oldMessage of page.values()) {
 			if (
-				oldMessage.id !== newMessageId
+				oldMessage.id !== keepMessageId
 				&& oldMessage.author.id === botUserId
 				&& oldMessage.content.startsWith('<@')
 				&& oldMessage.content.includes(

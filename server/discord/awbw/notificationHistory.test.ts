@@ -45,3 +45,28 @@ test('removes only older bot alerts for the requested game', async () => {
 	await removeOlderGameNotifications(history, 'bot', '123', 'new');
 	assert.deepEqual(deletedIds, ['old-123', 'older-123']);
 });
+
+test('removes the last bot alert when a game ends', async () => {
+	const deletedIds: string[] = [];
+	const messages = {
+		async fetch() {
+			return new Map([
+				[
+					'last-alert',
+					{
+						id: 'last-alert',
+						author: { id: 'bot' },
+						content:
+							'<@42> it is your turn in [AWBW game name](https://awbw.amarriner.com/game.php?games_id=123).',
+						async delete() {
+							deletedIds.push('last-alert');
+						},
+					},
+				],
+			]);
+		},
+	};
+
+	await removeOlderGameNotifications(messages, 'bot', '123');
+	assert.deepEqual(deletedIds, ['last-alert']);
+});
