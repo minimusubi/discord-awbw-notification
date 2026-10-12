@@ -1587,7 +1587,6 @@ textarea.form-control {
 
 .awbw-subscription__top,
 .awbw-subscription__game,
-.awbw-subscription__details,
 .awbw-subscription__footer {
 	display: flex;
 	align-items: center;
@@ -1644,39 +1643,49 @@ textarea.form-control {
 	color: #b7343e;
 }
 
-.awbw-subscription__details {
-	align-items: stretch;
-	gap: 1.5rem;
+.awbw-subscription__entries {
 	margin-top: 0.9rem;
-	padding-top: 0.85rem;
 	border-top: 1px solid var(--spotlight-border);
 }
 
-.awbw-subscription__details > div {
-	min-width: 0;
-	flex: 1;
+.awbw-subscription__entry {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.75rem;
+	padding: 0.75rem 0;
 }
 
-.awbw-subscription__details strong,
-.awbw-subscription__label {
-	display: block;
+.awbw-subscription__entry + .awbw-subscription__entry {
+	border-top: 1px solid var(--spotlight-border);
+}
+
+.awbw-subscription__entry-info {
+	display: flex;
 	min-width: 0;
+	flex-direction: column;
+	gap: 0.15rem;
+}
+
+.awbw-subscription__entry-info strong,
+.awbw-subscription__entry-info span,
+.awbw-subscription__entry-info small {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
-.awbw-subscription__label {
-	margin-bottom: 0.2rem;
-	color: var(--spotlight-muted);
-	font-size: 0.62rem;
-	font-weight: 760;
-	letter-spacing: 0.09em;
-	text-transform: uppercase;
+.awbw-subscription__entry-info strong {
+	font-size: 0.82rem;
 }
 
-.awbw-subscription__details strong {
-	font-size: 0.76rem;
+.awbw-subscription__entry-info span {
+	font-size: 0.75rem;
+}
+
+.awbw-subscription__entry-info small {
+	color: var(--spotlight-muted);
+	font-size: 0.65rem;
 }
 
 .awbw-subscription__footer {
@@ -1697,11 +1706,6 @@ textarea.form-control {
 
 .awbw-subscription__footer a:hover {
 	text-decoration: underline;
-}
-
-.awbw-subscription__footer small {
-	color: var(--spotlight-muted);
-	font-size: 0.65rem;
 }
 
 .awbw-empty-state {
@@ -1747,9 +1751,5 @@ textarea.form-control {
 	.awbw-notification-preview {
 		max-width: 31rem;
 		transform: none;
-	}
-
-	.awbw-subscription__details {
-		gap: 0.85rem;
 	}
 }

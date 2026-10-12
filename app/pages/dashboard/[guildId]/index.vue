@@ -229,8 +229,8 @@
 					class="awbw-subscription-list mt-4"
 				>
 					<article
-						v-for="subscription in dashboardData.subscriptions"
-						:key="subscription.id"
+						v-for="group in subscriptionGroups"
+						:key="group.key"
 						class="awbw-subscription"
 					>
 						<div class="awbw-subscription__top">
@@ -241,62 +241,69 @@
 									>
 								</span>
 								<span>
-									<strong>{{
-										getGameLabel(subscription)
-									}}</strong>
+									<strong>{{ getGameLabel(group) }}</strong>
 									<small
-										>AWBW username:
-										{{ subscription.awbwUsername }}</small
+										>#{{
+											group.channelName || group.channelId
+										}}</small
 									>
 								</span>
 							</div>
-							<button
-								class="icon-button awbw-subscription__remove"
-								type="button"
-								:aria-label="`Remove alert for ${subscription.awbwUsername} in ${getGameLabel(subscription)}`"
-								:title="`Remove alert for ${getGameLabel(subscription)}`"
-								:disabled="removingSubscriptionId !== null"
-								@click="removeSubscription(subscription)"
-							>
-								<span
-									v-if="
-										removingSubscriptionId
-										=== subscription.id
-									"
-									class="spinner-border spinner-border-sm"
-								></span>
-								<span
-									v-else
-									class="material-symbols-outlined"
-									>delete</span
-								>
-							</button>
 						</div>
-						<div class="awbw-subscription__details">
-							<div>
-								<span class="awbw-subscription__label"
-									>Notify</span
+						<div class="awbw-subscription__entries">
+							<div
+								v-for="subscription in group.subscriptions"
+								:key="subscription.id"
+								class="awbw-subscription__entry"
+							>
+								<div class="awbw-subscription__entry-info">
+									<strong>{{
+										subscription.awbwUsername
+									}}</strong>
+									<span>
+										Notify
+										{{
+											subscription.discordUserDisplayName
+											|| `User ${subscription.discordUserId}`
+										}}
+									</span>
+									<small
+										v-if="getPlayerIds(subscription).length"
+									>
+										Player IDs
+										{{
+											getPlayerIds(subscription).join(
+												', ',
+											)
+										}}
+									</small>
+								</div>
+								<button
+									class="icon-button awbw-subscription__remove"
+									type="button"
+									:aria-label="`Remove alert for ${subscription.awbwUsername} in ${getGameLabel(group)}`"
+									:title="`Remove alert for ${subscription.awbwUsername}`"
+									:disabled="removingSubscriptionId !== null"
+									@click="removeSubscription(subscription)"
 								>
-								<strong>{{
-									subscription.discordUserDisplayName
-									|| `User ${subscription.discordUserId}`
-								}}</strong>
-							</div>
-							<div>
-								<span class="awbw-subscription__label"
-									>Channel</span
-								>
-								<strong
-									>#{{
-										subscription.channelName
-										|| subscription.channelId
-									}}</strong
-								>
+									<span
+										v-if="
+											removingSubscriptionId
+											=== subscription.id
+										"
+										class="spinner-border spinner-border-sm"
+									></span>
+									<span
+										v-else
+										class="material-symbols-outlined"
+										>delete</span
+									>
+								</button>
 							</div>
 						</div>
 						<div class="awbw-subscription__footer">
 							<a
-								:href="subscription.gameUrl"
+								:href="group.gameUrl"
 								target="_blank"
 								rel="noreferrer"
 							>
@@ -305,10 +312,6 @@
 									>open_in_new</span
 								>
 							</a>
-							<small v-if="getPlayerIds(subscription).length">
-								Player IDs
-								{{ getPlayerIds(subscription).join(', ') }}
-							</small>
 						</div>
 					</article>
 				</div>
@@ -374,6 +377,38 @@
 				0,
 			) ?? 0,
 	);
+	interface SubscriptionGroup {
+		key: string;
+		gameId: string;
+		gameName?: string;
+		gameUrl: string;
+		channelId: string;
+		channelName?: string | null;
+		subscriptions: AWBWGameSubscription[];
+	}
+	const subscriptionGroups = computed(() => {
+		const groups = new Map<string, SubscriptionGroup>();
+		for (const subscription of dashboardData.value?.subscriptions ?? []) {
+			const key = `${subscription.gameId}:${subscription.channelId}`;
+			let group = groups.get(key);
+			if (!group) {
+				group = {
+					key,
+					gameId: subscription.gameId,
+					gameName: subscription.gameName,
+					gameUrl: subscription.gameUrl,
+					channelId: subscription.channelId,
+					channelName: subscription.channelName,
+					subscriptions: [],
+				};
+				groups.set(key, group);
+			}
+			group.gameName ??= subscription.gameName;
+			group.channelName ??= subscription.channelName;
+			group.subscriptions.push(subscription);
+		}
+		return [...groups.values()];
+	});
 	const parsedGameId = computed(() => parseAWBWGameId(gameUrl.value));
 
 	watch(
@@ -478,10 +513,12 @@
 		return [...new Set(playerIds)];
 	}
 
-	function getGameLabel(subscription: AWBWGameSubscription): string {
-		return subscription.gameName ?
-				`${subscription.gameName} (Game #${subscription.gameId})`
-			:	`Game #${subscription.gameId}`;
+	function getGameLabel(
+		game: Pick<AWBWGameSubscription, 'gameId' | 'gameName'>,
+	): string {
+		return game.gameName ?
+				`${game.gameName} (Game #${game.gameId})`
+			:	`Game #${game.gameId}`;
 	}
 
 	function getErrorMessage(error: unknown, fallback: string): string {
